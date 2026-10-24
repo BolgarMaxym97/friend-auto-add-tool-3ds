@@ -1,0 +1,12 @@
+.venv/
+.idea/
+build/
+app/build/
+app/*.3dsx
+app/*.smdh
+app/*.elf
+app/*.cia
+app/art/banner.bnr
+*.cia
+requirements_from_author/
+__pycache__/
