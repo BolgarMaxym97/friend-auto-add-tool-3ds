@@ -85,7 +85,23 @@ static void job_update(Worker *w)
             fresh.bad ? ", є хибні рядки" : "");
 }
 
-static void add_one(Worker *w, const DbEntry *e)
+/* Why the friends server would not take us, for the user: the run cannot go on without it. */
+static void no_login(Worker *w, Result res)
+{
+    if (res == (Result)0xC960C501)
+        snprintf(w->message, sizeof(w->message),
+                 "Pretendo відхилив вхід (0x%08lX): оновіть Nimbus до 2.2.0 і запустіть його, тоді спробуйте знову.",
+                 res);
+    else
+        snprintf(w->message, sizeof(w->message),
+                 "Сервіс друзів Pretendo зараз недоступний (0x%08lX). Спробуйте пізніше: «Список друзів» у меню HOME "
+                 "покаже те саме.",
+                 res);
+    log_add(LOG_ERROR, 0, "Немає входу в сервіс друзів (0x%08lX) - зупинено", res);
+}
+
+/* False when the friends server dropped us and would not take us back: stop the run. */
+static bool add_one(Worker *w, const DbEntry *e)
 {
     char buf[FC_STR_LEN];
     u8 relationship = 0;
@@ -103,6 +119,11 @@ static void add_one(Worker *w, const DbEntry *e)
             Result login = friends_login(LOGIN_TIMEOUT_MS);
             w->model->console.online = R_SUCCEEDED(login);
             w->model->console.login_result = login;
+            if (R_FAILED(login)) {
+                w->retrying = false;
+                no_login(w, login);
+                return false;
+            }
         } else {
             log_add(LOG_INFO, 0, "%s: 0x%08lX - пробую ще раз", who, res);
         }
@@ -119,6 +140,7 @@ static void add_one(Worker *w, const DbEntry *e)
         w->requests++;
         log_add(LOG_REQUEST, e->code, "%s%s", who, relationship == RELATIONSHIP_LOCAL ? " (ще не надіслано)" : "");
     }
+    return true;
 }
 
 static void job_add(Worker *w)
@@ -134,8 +156,13 @@ static void job_add(Worker *w)
         w->retrying = false;
         m->console.online = R_SUCCEEDED(res);
         m->console.login_result = res;
-        if (R_FAILED(res))
-            log_add(LOG_INFO, 0, "Вхід не підтверджено (0x%08lX), пробую додавати", res);
+        /* Every add without the login fails with 0xD8A0C4E4 (logs of 2026-10-24): when the server
+         * is down (0xC960C4A2, HOME's 001-0502) say so instead of failing code after code. */
+        if (R_FAILED(res)) {
+            no_login(w, res);
+            friends_list(&m->friends);
+            return;
+        }
     }
     if (R_FAILED(friends_list(&m->friends))) {
         snprintf(w->message, sizeof(w->message), "Не вдалося прочитати список друзів.");
@@ -173,7 +200,8 @@ static void job_add(Worker *w)
         fc_format(e->code, w->current);
         snprintf(w->current_name, sizeof(w->current_name), "%s", e->name);
         int errors = w->errors;
-        add_one(w, e);
+        if (!add_one(w, e))
+            break;
         w->done++;
         failed_in_row = w->errors > errors ? failed_in_row + 1 : 0;
         if (failed_in_row >= ERRORS_IN_ROW) {

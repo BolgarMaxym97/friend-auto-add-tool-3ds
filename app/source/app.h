@@ -11,7 +11,7 @@
 #include "planner.h"
 #include "worker.h"
 
-#define APP_VERSION "1.0.1"
+#define APP_VERSION "1.0.2"
 
 typedef enum {
     SCREEN_CHECK,

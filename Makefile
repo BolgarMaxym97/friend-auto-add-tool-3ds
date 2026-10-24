@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 PY ?= .venv/bin/python
-VERSION := 1.0.1
+VERSION := 1.0.2
 
 # devkitARM in its container: the app, the fonts' bcfnt, nothing installed on the host.
 DKA := docker run --rm --user "$$(id -u):$$(id -g)" -v "$$PWD:/w" -w /w devkitpro/devkitarm
