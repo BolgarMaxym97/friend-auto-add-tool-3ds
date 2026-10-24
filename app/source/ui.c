@@ -3,11 +3,11 @@
 #include <math.h>
 #include <string.h>
 
-/* romfs:/gfx/nunito_*.bcfnt: Nunito (OFL) at 700 and 800, made by `make fonts` at these em sizes.
- * Text below SMALL_TEXT_PX uses the small set: glyphs scaled under about 0.7 lose texels and
- * read broken on the console. */
+/* romfs:/gfx/nunito_*.bcfnt: Nunito (OFL) at 700 and 800, made by `make fonts` at 24 and 12 px.
+ * citro2d scales every font to the same line height (textScale = 30 / cellHeight), so both
+ * sets take px / FONT_EM; text below SMALL_TEXT_PX uses the 12 px glyphs, which the GPU draws
+ * near their own size instead of halving the 24 px ones and losing texels. */
 #define FONT_EM 24.0f
-#define SMALL_FONT_EM 12.0f
 #define SMALL_TEXT_PX 16.0f
 #define LINE_HEIGHT 1.32f
 /* Nunito's line box has more room above the letters than below: drawn at its top, text sits
@@ -55,11 +55,6 @@ static C2D_Font font_for(float px, FontWeight weight)
     return px < SMALL_TEXT_PX ? small_fonts[weight] : fonts[weight];
 }
 
-static float scale_for(float px)
-{
-    return px / (px < SMALL_TEXT_PX ? SMALL_FONT_EM : FONT_EM);
-}
-
 static bool parse(C2D_Text *text, float px, FontWeight weight, const char *str)
 {
     if (!C2D_TextFontParse(text, font_for(px, weight), text_buf, str))
@@ -71,7 +66,7 @@ static bool parse(C2D_Text *text, float px, FontWeight weight, const char *str)
 float ui_text_width(float px, FontWeight weight, const char *str)
 {
     C2D_Text text;
-    float w = 0, h = 0, s = scale_for(px);
+    float w = 0, h = 0, s = px / FONT_EM;
     C2D_TextBufClear(measure_buf);
     if (C2D_TextFontParse(&text, font_for(px, weight), measure_buf, str))
         C2D_TextGetDimensions(&text, s, s, &w, &h);
@@ -81,7 +76,7 @@ float ui_text_width(float px, FontWeight weight, const char *str)
 float ui_text(float x, float y, float px, FontWeight weight, u32 color, const char *str)
 {
     C2D_Text text;
-    float w = 0, h = 0, s = scale_for(px);
+    float w = 0, h = 0, s = px / FONT_EM;
     if (!parse(&text, px, weight, str))
         return 0;
     C2D_TextGetDimensions(&text, s, s, &w, &h);
