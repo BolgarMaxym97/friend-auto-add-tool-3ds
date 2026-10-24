@@ -26,7 +26,7 @@ typedef struct {
     bool friends_ok;
 } Model;
 
-typedef enum { JOB_NONE, JOB_CHECK, JOB_UPDATE, JOB_ADD, JOB_REMOVE_DB, JOB_REMOVE_ALL } Job;
+typedef enum { JOB_NONE, JOB_CHECK, JOB_LOGIN, JOB_UPDATE, JOB_ADD, JOB_REMOVE_DB, JOB_REMOVE_ALL } Job;
 
 typedef struct {
     Thread thread;
@@ -39,6 +39,7 @@ typedef struct {
     volatile int mutual, requests, skipped, errors, removed, no_room, new_codes;
     char current[FC_STR_LEN];
     char current_name[DB_NAME_BYTES];
+    volatile bool retrying; /* logging in again / giving the code in hand one more go */
     /* the outcome, valid once the job is collected */
     bool ok;
     char message[200];

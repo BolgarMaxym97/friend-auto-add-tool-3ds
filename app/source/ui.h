@@ -70,10 +70,13 @@ void ui_rrect(float x, float y, float w, float h, float r, u32 color);
 void ui_card(float x, float y, float w, float h, float r, u32 color, float shadow);
 void ui_circle(float cx, float cy, float r, u32 color);
 void ui_ring(float cx, float cy, float r_out, float r_in, float fraction, u32 color, u32 track);
+/* Eight dots around (cx, cy) with a running head: "busy, no progress to show". */
+void ui_spinner(float cx, float cy, float r, u32 color);
 void ui_icon(Icon icon, float cx, float cy, float size, u32 color);
 
 /* A round key cap with a letter (A, B, Y) or a pill (START), then the label. */
 float ui_key_hint(float x, float y, const char *key, const char *label);
+float ui_key_hint_width(const char *key, const char *label);
 
 /* The ring round the button D-Pad focus is on; drawn before the button. */
 void ui_focus(float x, float y, float w, float h, float r);

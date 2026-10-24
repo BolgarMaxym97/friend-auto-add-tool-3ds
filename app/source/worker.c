@@ -32,12 +32,27 @@ static void job_check(Worker *w)
     w->ok = true;
 }
 
+/* Logs in again once the friends module has dropped the server (sleep mode does that) without
+ * the full check, which clears the console state the main screen is drawing from. */
+static void job_login(Worker *w)
+{
+    Console *c = &w->model->console;
+    Result res = friends_login(LOGIN_TIMEOUT_MS);
+    c->online = R_SUCCEEDED(res);
+    c->login_result = res;
+    if (c->online)
+        log_add(LOG_INFO, 0, "Повторний вхід у сервіс друзів: виконано");
+    else
+        log_add(LOG_INFO, 0, "Повторний вхід у сервіс друзів не вдався (0x%08lX)", res);
+    w->ok = true;
+}
+
 static void job_update(Worker *w)
 {
     static char text[DB_FILE_MAX];
     static Db fresh;
     Model *m = w->model;
-    char err[80];
+    char err[128];
     size_t len;
 
     w->total = 1;
@@ -77,6 +92,24 @@ static void add_one(Worker *w, const DbEntry *e)
     Result res = friends_add(e->code, e->name, &relationship);
     const char *who = name_or_code(e->name, e->code, buf);
     if (R_FAILED(res)) {
+        /* The server slowing down ends in an error (0xC960C425) and the friends module logged out,
+         * so every next add fails at once with 0xD8A0C4E4 (New 3DS log, 2026-10-24); right after
+         * start-up or sleep it is not on the server yet. Log in again if needed and give the code
+         * one more go: friends_add finds it if the first try did reach the server. */
+        w->retrying = true;
+        svcSleepThread(ADD_PAUSE_NS);
+        if (!friends_online()) {
+            log_add(LOG_INFO, 0, "%s: 0x%08lX, немає входу - входжу знову", who, res);
+            Result login = friends_login(LOGIN_TIMEOUT_MS);
+            w->model->console.online = R_SUCCEEDED(login);
+            w->model->console.login_result = login;
+        } else {
+            log_add(LOG_INFO, 0, "%s: 0x%08lX - пробую ще раз", who, res);
+        }
+        res = friends_add(e->code, e->name, &relationship);
+        w->retrying = false;
+    }
+    if (R_FAILED(res)) {
         w->errors++;
         log_add(LOG_ERROR, e->code, "%s: 0x%08lX", who, res);
     } else if (relationship == RELATIONSHIP_COMPLETE) {
@@ -96,7 +129,9 @@ static void job_add(Worker *w)
 
     if (!friends_online()) {
         log_add(LOG_INFO, 0, "Вхід у сервіс друзів…");
+        w->retrying = true;
         Result res = friends_login(LOGIN_TIMEOUT_MS);
+        w->retrying = false;
         m->console.online = R_SUCCEEDED(res);
         m->console.login_result = res;
         if (R_FAILED(res))
@@ -204,6 +239,7 @@ static void run(void *arg)
     Worker *w = arg;
     switch (w->job) {
     case JOB_CHECK: job_check(w); break;
+    case JOB_LOGIN: job_login(w); break;
     case JOB_UPDATE: job_update(w); break;
     case JOB_ADD: job_add(w); break;
     case JOB_REMOVE_DB: job_remove(w, false); break;

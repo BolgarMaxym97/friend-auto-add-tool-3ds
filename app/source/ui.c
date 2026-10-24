@@ -167,6 +167,18 @@ void ui_circle(float cx, float cy, float r, u32 color)
     C2D_DrawCircleSolid(cx, cy, 0.3f, r, color);
 }
 
+void ui_spinner(float cx, float cy, float r, u32 color)
+{
+    const int dots = 8;
+    int head = (int)(osGetTime() / 100 % dots);
+    for (int i = 0; i < dots; i++) {
+        int behind = (head - i + dots) % dots; /* 0 = the head, fading behind it */
+        u32 alpha = behind < 4 ? 0xFF - behind * 0x38 : 0x30;
+        float a = i * (float)M_PI * 2 / dots;
+        ui_circle(cx + sinf(a) * r, cy - cosf(a) * r, r * 0.28f, (color & 0x00FFFFFF) | alpha << 24);
+    }
+}
+
 void ui_rrect(float x, float y, float w, float h, float r, u32 color)
 {
     if (r * 2 > w)
@@ -369,12 +381,41 @@ void ui_icon(Icon icon, float cx, float cy, float size, u32 color)
     }
 }
 
+#define KEY_H 17.0f
+#define KEY_GAP 3.0f
+
+static float key_width(const char *key)
+{
+    return strlen(key) > 1 ? ui_text_width(8, FONT_HEAVY, key) + 12 : KEY_H;
+}
+
+static float key_cap(float x, float y, const char *key)
+{
+    float w = key_width(key);
+    ui_rrect(x, y, w, KEY_H, KEY_H / 2, COL_INK);
+    ui_text_center(x + w / 2, y + (strlen(key) > 1 ? 3.5f : 1.5f), strlen(key) > 1 ? 8 : 10, FONT_HEAVY, COL_WHITE, key);
+    return w;
+}
+
+/* "L/R" is two caps side by side, for a pair of keys doing one thing each way */
+float ui_key_hint_width(const char *key, const char *label)
+{
+    const char *slash = strchr(key, '/');
+    float caps = slash ? KEY_H * 2 + KEY_GAP : key_width(key);
+    return caps + 4 + ui_text_width(12, FONT_BOLD, label);
+}
+
 float ui_key_hint(float x, float y, const char *key, const char *label)
 {
-    float h = 17;
-    float w = strlen(key) > 1 ? ui_text_width(8, FONT_HEAVY, key) + 12 : h;
-    ui_rrect(x, y, w, h, h / 2, COL_INK);
-    ui_text_center(x + w / 2, y + (strlen(key) > 1 ? 3.5f : 1.5f), strlen(key) > 1 ? 8 : 10, FONT_HEAVY, COL_WHITE, key);
+    const char *slash = strchr(key, '/');
+    float w;
+    if (slash && slash - key == 1 && strlen(slash + 1) == 1) {
+        char first[2] = {key[0], 0};
+        w = key_cap(x, y, first) + KEY_GAP;
+        w += key_cap(x + w, y, slash + 1);
+    } else {
+        w = key_cap(x, y, key);
+    }
     return w + 4 + ui_text(x + w + 4, y + 0.5f, 12, FONT_BOLD, COL_MUTED, label);
 }
 

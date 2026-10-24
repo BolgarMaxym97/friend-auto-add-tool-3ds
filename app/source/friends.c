@@ -5,7 +5,10 @@
 
 #include "fc.h"
 
-#define ADD_TIMEOUT_NS (10ull * 1000 * 1000 * 1000)
+/* Pretendo can take over 10 s per code when busy (New 3DS log, 2026-10-24) */
+#define ADD_TIMEOUT_NS (30ull * 1000 * 1000 * 1000)
+/* what svcWaitSynchronization returns on timeout: not a failure by R_FAILED */
+#define WAIT_TIMED_OUT 0x09401BFE
 
 static bool ready;
 
@@ -54,10 +57,9 @@ bool friends_logged_in(void)
     return R_SUCCEEDED(FRD_HasLoggedIn(&logged)) && logged;
 }
 
-/* Login from an app sends the app's own title to the server, which Pretendo may refuse
- * (likely NASC 101 "maintenance": 0xC960C501 on the test console, 2026-10-23):
- * the result is a hint, not a verdict. Online is what counts, and the friends module may
- * get there a moment after the event. */
+/* 0xC960C501 here is Pretendo's NASC 122: the console's uidhmac is stale, which Nimbus 2.2.0
+ * repairs. The result is a hint, not a verdict: online is what counts, and the friends module
+ * may get there a moment after the event. */
 Result friends_login(u32 timeout_ms)
 {
     if (friends_online())
@@ -165,23 +167,28 @@ static bool find_key(u32 pid, FriendKey *key, u8 *relationship)
 Result friends_add(u64 code, const char *name, u8 *relationship)
 {
     u32 pid = fc_pid(code);
-    Handle event;
-    Result res = svcCreateEvent(&event, RESET_ONESHOT);
-    if (R_FAILED(res))
-        return res;
-    res = FRDA_AddFriendOnline(event, pid);
-    if (R_SUCCEEDED(res)) {
-        res = svcWaitSynchronization(event, ADD_TIMEOUT_NS);
-        if (R_SUCCEEDED(res))
-            res = FRD_GetLastResponseResult();
-    }
-    svcCloseHandle(event);
-    if (R_FAILED(res))
-        return res;
-
     FriendKey key;
-    if (!find_key(pid, &key, relationship))
-        return MAKERESULT(RL_PERMANENT, RS_NOTFOUND, RM_APPLICATION, RD_NOT_FOUND);
+    /* An add that reported an error may still have reached the server and the list (New 3DS
+     * log, 2026-10-24): a retry finds the code there and only names it. */
+    if (!find_key(pid, &key, relationship)) {
+        Handle event;
+        Result res = svcCreateEvent(&event, RESET_ONESHOT);
+        if (R_FAILED(res))
+            return res;
+        res = FRDA_AddFriendOnline(event, pid);
+        if (R_SUCCEEDED(res)) {
+            res = svcWaitSynchronization(event, ADD_TIMEOUT_NS);
+            if (res == WAIT_TIMED_OUT)
+                res = MAKERESULT(RL_TEMPORARY, RS_STATUSCHANGED, RM_APPLICATION, RD_TIMEOUT);
+            else if (R_SUCCEEDED(res))
+                res = FRD_GetLastResponseResult();
+        }
+        svcCloseHandle(event);
+        if (R_FAILED(res))
+            return res;
+        if (!find_key(pid, &key, relationship))
+            return MAKERESULT(RL_PERMANENT, RS_NOTFOUND, RM_APPLICATION, RD_NOT_FOUND);
+    }
 
     MiiScreenName mii_name;
     screen_name(code, name, mii_name);

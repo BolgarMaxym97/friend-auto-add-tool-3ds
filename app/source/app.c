@@ -197,12 +197,17 @@ static const char *remove_block(const App *app)
 
 static void start_job(App *app, Job job)
 {
+    if (app->worker.thread) {
+        /* only the background re-login runs unasked */
+        toast(app, "Зачекайте: вхід у сервіс друзів…");
+        return;
+    }
     worker_start(&app->worker, job, &app->model);
     if (!app->worker.thread) {
         toast(app, app->worker.message);
         return;
     }
-    if (job != JOB_CHECK)
+    if (job != JOB_CHECK && job != JOB_LOGIN)
         go(app, SCREEN_PROGRESS, 0);
 }
 
@@ -386,8 +391,7 @@ static void draw_hints(int n, const char *const keys[], const char *const labels
 {
     float widths[4], total = 0;
     for (int i = 0; i < n; i++) {
-        float key = strlen(keys[i]) > 1 ? ui_text_width(8, FONT_HEAVY, keys[i]) + 12 : 17;
-        widths[i] = key + 4 + ui_text_width(12, FONT_BOLD, labels[i]);
+        widths[i] = ui_key_hint_width(keys[i], labels[i]);
         total += widths[i];
     }
     float gap = n > 1 ? (BOTTOM_W - 28 - total) / (n - 1) : 0, x = 14;
@@ -463,7 +467,7 @@ static void draw_check_top(const App *app)
 {
     Row rows[CHECK_ROWS];
     int n = check_rows(app, rows);
-    bool waiting = app->worker.busy && app->worker.job == JOB_CHECK;
+    bool waiting = app->worker.busy && (app->worker.job == JOB_CHECK || app->worker.job == JOB_LOGIN);
     ui_text(18, 7, 17, FONT_HEAVY, COL_INK, "Перевірка консолі");
     for (int i = 0; i < n; i++) {
         float y = 34 + i * 17.5f, mid = y + 7.5f;
@@ -482,7 +486,7 @@ static void draw_check_top(const App *app)
 
 static void draw_check_bottom(const App *app)
 {
-    bool waiting = app->worker.busy && app->worker.job == JOB_CHECK;
+    bool waiting = app->worker.busy && (app->worker.job == JOB_CHECK || app->worker.job == JOB_LOGIN);
     Row rows[CHECK_ROWS];
     const Row *first;
     Level level = worst(rows, check_rows(app, rows), &first);
@@ -586,7 +590,7 @@ static void draw_main_top(const App *app)
         float right = 364;
         if (m->db_updated) {
             struct tm *tm = gmtime(&m->db_updated);
-            char when[32] = "";
+            char when[48] = ""; /* " · оновлено 24.10, 13:42" is 33 bytes in UTF-8 */
             if (tm)
                 strftime(when, sizeof(when), " · оновлено %d.%m, %H:%M", tm);
             right -= ui_text_right(364, 157, 12, FONT_BOLD, COL_FAINT, when);
@@ -601,6 +605,12 @@ static void draw_main_top(const App *app)
     ui_text(36, 188, 12, FONT_BOLD, COL_MUTED, "Інтернет");
     const char *net;
     u32 color;
+    if (app->relogin || (app->worker.busy && app->worker.job == JOB_LOGIN)) {
+        /* after sleep: Wi-Fi comes back first, then the background login */
+        float w = ui_text_right(364, 188, 12, FONT_BOLD, COL_BLUE, c->wifi ? "Відновлюю вхід…" : "Чекаю на Wi-Fi…");
+        ui_spinner(364 - w - 10, 196, 4.5f, COL_BLUE);
+        return;
+    }
     if (!c->wifi) {
         net = "Немає з'єднання";
         color = COL_RED;
@@ -805,7 +815,7 @@ static void draw_log_bottom(const App *app)
         ui_icon(i ? ICON_DOWN : ICON_UP, x + 7.5f, r.y + r.h / 2, 15, COL_INK);
         ui_text(x + 20, r.y + r.h / 2 - 9, 12, FONT_HEAVY, COL_INK, labels[i]);
     }
-    draw_hints(3, (const char *[]){"D-Pad", "L", "B"}, (const char *[]){"Прокрутка", "R Фільтр", "Назад"});
+    draw_hints(3, (const char *[]){"D-Pad", "L/R", "B"}, (const char *[]){"Прокрутка", "Фільтр", "Назад"});
 }
 
 static void update_log(App *app, const Input *in)
@@ -876,14 +886,19 @@ static void draw_progress_top(const App *app)
     ui_text(169, 47, 9.5f, FONT_BOLD, COL_MUTED, what);
     if (w->job == JOB_UPDATE) {
         ui_text(169, 60, 13, FONT_HEAVY, COL_INK, "GitHub");
-        ui_circle(172, 99, 3, COL_BLUE);
-        ui_text(179, 92, 10.5f, FONT_BOLD, COL_BLUE, "завантажую файл…");
+        ui_spinner(173, 99, 5, COL_BLUE);
+        ui_text(183, 92, 10.5f, FONT_BOLD, COL_BLUE, "завантажую файл…");
+    } else if (w->retrying) {
+        /* a login can take up to 15 s: show it is still going, not stuck */
+        ui_text(169, 60, 15, FONT_HEAVY, w->current[0] ? COL_INK : COL_FAINT, w->current[0] ? w->current : "Pretendo");
+        ui_spinner(173, 99, 5, COL_BLUE);
+        ui_text(183, 92, 10.5f, FONT_BOLD, COL_BLUE, w->current[0] ? "входжу знову, повторю код…" : "вхід у сервіс друзів…");
     } else if (w->current[0]) {
         ui_text(169, 60, 15, FONT_HEAVY, COL_INK, w->current);
         snprintf(buf, sizeof(buf), "%s%s%s", w->current_name, w->current_name[0] ? " · " : "",
                  w->job == JOB_ADD ? "чекаю на сервер…" : "видаляю…");
-        ui_circle(172, 99, 3, COL_BLUE);
-        ui_text(179, 92, 10.5f, FONT_BOLD, COL_BLUE, buf);
+        ui_spinner(173, 99, 5, COL_BLUE);
+        ui_text(183, 92, 10.5f, FONT_BOLD, COL_BLUE, buf);
     } else {
         ui_text(169, 62, 13, FONT_HEAVY, COL_FAINT, "готуюсь…");
     }
@@ -892,8 +907,9 @@ static void draw_progress_top(const App *app)
         draw_counter(195, w->mutual, "взаємних", COL_GREEN_TEXT);
         draw_counter(269, w->requests, "заявок", COL_BLUE);
         draw_counter(343, w->skipped, "пропущено", COL_MUTED);
-        int left = free_places(app) - (w->total - w->done);
-        snprintf(buf, sizeof(buf), "Вільних місць лишиться: %d з 100", left > 0 ? left : 0);
+        /* the friend list is read before the run and after it: count down from that by what got in */
+        int left = free_places(app) - (w->mutual + w->requests);
+        snprintf(buf, sizeof(buf), "Вільних місць: %d з 100", left > 0 ? left : 0);
         ui_text(158, 176, 9.5f, FONT_BOLD, COL_FAINT, buf);
     } else if (w->job != JOB_UPDATE) {
         draw_counter(220, w->removed, "видалено", COL_INK);
@@ -1260,6 +1276,8 @@ static void job_finished(App *app)
 {
     Job job = app->worker.job;
     update_plan(app);
+    if (job == JOB_LOGIN)
+        return;
     if (job == JOB_CHECK) {
         Console *c = &app->model.console;
         if (c->frd_admin && !app->notify)
@@ -1298,10 +1316,19 @@ void app_update(App *app, const Input *in)
     if (app->notify && svcWaitSynchronization(app->notify, 0) == 0 && friends_drain_notifications())
         app->next_refresh = 0;
     u64 now = osGetTime();
-    if (!app->worker.busy && app->model.console.done && now >= app->next_refresh) {
+    Console *c = &app->model.console;
+    if (!app->worker.busy && c->done && now >= app->next_refresh) {
         app->next_refresh = now + REFRESH_MS;
-        checks_refresh_network(&app->model.console);
+        bool was_online = c->online;
+        checks_refresh_network(c);
+        /* sleep mode logs the friends module out; it waits for Wi-Fi to come back */
+        if (was_online && !c->online)
+            app->relogin = true;
         refresh_friends(app);
+    }
+    if (app->relogin && !app->worker.thread && c->wifi) {
+        app->relogin = false;
+        start_job(app, JOB_LOGIN);
     }
 
     if ((in->down & KEY_START) && app->screen != SCREEN_PROGRESS) {

@@ -11,7 +11,7 @@
 #include "planner.h"
 #include "worker.h"
 
-#define APP_VERSION "1.0.0"
+#define APP_VERSION "1.0.1"
 
 typedef enum {
     SCREEN_CHECK,
@@ -46,6 +46,7 @@ typedef struct {
     char toast[200];
     u64 toast_until;
     u64 next_refresh;
+    bool relogin;          /* the friends server dropped us: log in again once Wi-Fi is up */
     Handle notify;
     bool quit;
 } App;

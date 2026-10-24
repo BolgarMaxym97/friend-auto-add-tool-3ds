@@ -54,9 +54,16 @@ static size_t sink_write(char *data, size_t size, size_t n, void *user)
     return bytes;
 }
 
+static bool transient(CURLcode res)
+{
+    return res == CURLE_SSL_CONNECT_ERROR || res == CURLE_COULDNT_CONNECT || res == CURLE_COULDNT_RESOLVE_HOST ||
+           res == CURLE_OPERATION_TIMEDOUT || res == CURLE_RECV_ERROR || res == CURLE_SEND_ERROR;
+}
+
 bool net_get(const char *url, char *buf, size_t cap, size_t *len, char *err, size_t err_cap)
 {
     Sink sink = {buf, cap, 0, false};
+    char detail[CURL_ERROR_SIZE];
     *len = 0;
     if (!soc_buffer) {
         snprintf(err, err_cap, "мережа не запущена");
@@ -77,8 +84,20 @@ bool net_get(const char *url, char *buf, size_t cap, size_t *len, char *err, siz
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 40L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sink_write);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, detail);
 
-    CURLcode res = curl_easy_perform(curl);
+    /* the New 3DS once failed the TLS handshake on a shaky connection: one more go */
+    CURLcode res = CURLE_OK;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt)
+            svcSleepThread(2000ull * 1000 * 1000);
+        detail[0] = 0;
+        sink.len = 0;
+        sink.too_big = false;
+        res = curl_easy_perform(curl);
+        if (!transient(res))
+            break;
+    }
     long status = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(curl);
@@ -90,6 +109,8 @@ bool net_get(const char *url, char *buf, size_t cap, size_t *len, char *err, siz
     if (res != CURLE_OK) {
         if (res == CURLE_HTTP_RETURNED_ERROR)
             snprintf(err, err_cap, "сервер відповів %ld", status);
+        else if (detail[0])
+            snprintf(err, err_cap, "%s (%s)", curl_easy_strerror(res), detail);
         else
             snprintf(err, err_cap, "%s", curl_easy_strerror(res));
         return false;
